@@ -36,7 +36,7 @@ def check_gscat_vs_skeleton(
                 f"trial={t:04d} | "
                 f"dim={K.dimension()} | "
                 f"gscat(K)={lhs} | "
-                f"gscat(K^1)={rhs}"
+                f"gscat(K^1)={rhs}|"
             )
 
         if lhs is not None and rhs is not None and lhs > rhs:
