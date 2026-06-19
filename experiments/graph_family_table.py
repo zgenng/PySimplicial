@@ -1,4 +1,3 @@
-
 from generators.graphs import (
     complete_graph,
     cycle_graph,
