@@ -1,8 +1,8 @@
 # PySimplicial
 
-PySimplicial is a small Python library for working with finite simplicial complexes, strong collapses, cores, simplicial geometric category (`gscat`), and computational experiments in simplicial topology.
+PySimplicial is a Python library for the study and computation of finite simplicial complexes, strong collapses, cores, simplicial geometric category (`gscat`), and computational experiments in simplicial topology.
 
-The project is designed both as a learning tool and as an experimental research environment for testing conjectures about simplicial complexes.
+The project is designed both as an educational resource and as a research-oriented computational framework for investigating conjectures in combinatorial and algebraic topology.
 
 ---
 
@@ -20,24 +20,24 @@ The project is designed both as a learning tool and as an experimental research 
 
 ### Strong Collapse Theory
 
-* Dominated vertex detection
-* Strong collapse procedure
+* Detection of dominated vertices
+* Implementation of strong collapse procedures
 * Core computation
-* Strong collapsibility testing
+* Testing for strong collapsibility
 
 ### Simplicial Geometric Category
 
 * Computation of `gscat`
 * Construction of categorical covers
-* Special graph algorithm based on arboricity
+* Specialized graph algorithm based on arboricity
 * Graph covers by strongly collapsible subcomplexes
 
 ### Visualization
 
-* Drawing simplicial complexes
-* Drawing categorical covers
-* Highlighting shared edges in different cover elements
-* Visualization of 1-dimensional and 2-dimensional complexes
+* Visualization of simplicial complexes
+* Visualization of categorical covers
+* Highlighting shared edges across cover elements
+* Rendering of 1-dimensional and 2-dimensional complexes
 
 ### Experiments
 
@@ -46,36 +46,36 @@ The project is designed both as a learning tool and as an experimental research 
 * Search for counterexamples
 * Core statistics
 * Graph family tables
-* Computational checks of conjectures
+* Computational verification of conjectures
 
 ---
 
 ## Performance
 
-PySimplicial combines a user-friendly mathematical interface with several internal optimizations for computational topology and graph algorithms.
+PySimplicial combines a mathematically intuitive interface with optimized internal representations for efficient computation.
 
 ### Internal Representation
 
-The public API represents simplices as Python `frozenset` objects, providing a natural and readable mathematical description of simplicial complexes.
+The public API represents simplices as Python `frozenset` objects, ensuring clarity and mathematical readability.
 
-For performance-critical computations, simplices are automatically encoded into compact bitmask representations. This allows fast operations such as:
+For performance-critical operations, simplices are internally encoded as compact bitmasks. This enables efficient execution of:
 
 * simplex inclusion tests
 * maximal simplex detection
 * face comparisons
 * graph-theoretic computations
 
-The bitmask backend is completely transparent to the user.
+This optimization layer is fully transparent to the user.
 
 ### NumPy Acceleration
 
-Several algorithms use NumPy-based implementations internally, including:
+Several algorithms rely on NumPy-based implementations, including:
 
-* arboricity computation via the Nash–Williams formula
-* subset and bitmask transforms
+* computation of arboricity via the Nash–Williams formula
+* subset and bitmask transformations
 * induced subgraph statistics
 
-These optimizations significantly improve performance on medium-sized graphs while preserving the simplicity of the public API.
+These optimizations significantly improve performance on medium-sized instances while preserving usability.
 
 ---
 
@@ -192,7 +192,7 @@ print("Core:", core.simplicial_complex)
 print("Strongly collapsible:", K.is_strongly_collapsible())
 ```
 
-A filled simplex is strongly collapsible, so its core consists of a single vertex.
+A filled simplex is strongly collapsible, and therefore its core consists of a single vertex.
 
 ---
 
@@ -208,15 +208,15 @@ value, cover = K.gscat(for_graph=True)
 print("gscat(C3) =", value)
 ```
 
-For graphs, PySimplicial uses the relationship between `gscat` and graph arboricity.
+For graphs, PySimplicial uses the relationship between the simplicial geometric category and graph arboricity.
 
-For a connected graph G:
+For a connected graph $$G$$:
 
-[
+$$
 gscat(G) = a(G) - 1
-]
+$$
 
-where (a(G)) is the arboricity of (G).
+where $$a(G)$$ denotes the arboricity of $$G$$.
 
 ---
 
@@ -232,7 +232,7 @@ print("dim(S2) =", S2.dimension())
 print("dim(T2) =", T2.dimension())
 ```
 
-The `generators/` folder contains ready-made examples of graphs and simplicial complexes for tests and experiments.
+The `generators/` module provides standard examples of simplicial complexes and graphs for experimentation and testing.
 
 ---
 
@@ -260,13 +260,13 @@ value, cover = K.gscat(for_graph=True)
 draw_cover_on_complex(K, cover)
 ```
 
-If the same edge belongs to several cover elements, the visualization can display shared edges using small offsets so that all memberships remain visible.
+If an edge belongs to multiple cover elements, the visualization displays it with slight offsets to preserve clarity.
 
 ---
 
 ## Experiments
 
-The `experiments/` folder contains scripts for computational exploration.
+The `experiments/` directory contains scripts for computational investigations.
 
 ### Check the skeleton inequality
 
@@ -274,15 +274,15 @@ The `experiments/` folder contains scripts for computational exploration.
 python experiments/check_gscat_vs_skeleton.py
 ```
 
-This script tests the experimental inequality
+This script tests the inequality
 
-[
+$$
 gscat(K) \leq gscat(K^{(1)})
-]
+$$
 
 on randomly generated 2-dimensional simplicial complexes.
 
-This is not a proof. It is a computational experiment.
+This result is currently supported by computational evidence but is not proven in general.
 
 ### Search for counterexamples
 
@@ -290,7 +290,7 @@ This is not a proof. It is a computational experiment.
 python experiments/counterexample_search.py
 ```
 
-This script runs a larger parameter sweep and stops if a potential counterexample is found.
+This script performs an extended parameter search and terminates upon detecting a potential counterexample.
 
 ### Core statistics
 
@@ -298,7 +298,7 @@ This script runs a larger parameter sweep and stops if a potential counterexampl
 python experiments/core_statistics.py
 ```
 
-This script studies how often random complexes are strongly collapsible and computes basic statistics about their cores.
+This script analyzes the frequency of strong collapsibility in random complexes and computes statistics of their cores.
 
 ### Graph family table
 
@@ -306,7 +306,7 @@ This script studies how often random complexes are strongly collapsible and comp
 python experiments/graph_family_table.py
 ```
 
-This script computes `gscat` for standard graph families such as paths, cycles, stars, wheels, and complete graphs.
+This script computes $$gscat$$ values for standard graph families such as paths, cycles, stars, wheels, and complete graphs.
 
 ---
 
@@ -318,14 +318,14 @@ Run all tests using:
 pytest
 ```
 
-The tests check:
+The test suite verifies:
 
 * dimension computation
 * 1-skeleton construction
 * strong collapsibility
 * core computation
 * graph `gscat`
-* categorical cover correctness
+* correctness of categorical covers
 * strong collapsibility of cover elements
 * join construction
 
@@ -337,11 +337,11 @@ This project was developed as an experimental tool for studying the simplicial g
 
 One of the motivating research questions is the inequality
 
-[
+$$
 gscat(K) \leq gscat(K^{(1)}),
-]
+$$
 
-where (K^{(1)}) denotes the 1-skeleton of (K).
+where $$K^{(1)}$$ denotes the 1-skeleton of K.
 
 At the moment this inequality is supported by computational experiments, but no general proof is currently included in the project.
 
@@ -351,11 +351,11 @@ PySimplicial allows one to generate examples, compute categorical covers, test s
 
 ## Current Limitations
 
-* General `gscat` computation is exponential and intended only for small complexes.
-* The graph algorithm is faster, but constructing explicit covers can still be expensive for large dense graphs.
-* Join decomposition (`is_join`) currently uses exhaustive search and becomes expensive for complexes with many vertices.
-* Some generated complexes are intended mainly for experiments and are not canonical minimal triangulations.
-* The project is currently under active development.
+* General computation of `gscat` is exponential and feasible only for small complexes
+* The graph-based algorithm is more efficient, but explicit cover construction remains costly for dense graphs
+* Join decomposition (`is_join`) relies on exhaustive search and becomes expensive for complexes with many vertices
+* Some generated complexes are intended for experimentation and are not minimal triangulations
+* The project is under active development
 
 ---
 
@@ -370,10 +370,12 @@ PySimplicial allows one to generate examples, compute categorical covers, test s
 
 ## Author
 
-**Islam Yeginbay**
+Islam Yeginbay
 
 B.Sc. Student in Mathematical Computer Modeling
 Suleyman Demirel University (SDU)
+
+Email: [islam.yeginbay@gmail.com](mailto:islam.yeginbay@gmail.com)
 
 Research interests:
 
