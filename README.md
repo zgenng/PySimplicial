@@ -10,43 +10,72 @@ The project is designed both as a learning tool and as an experimental research 
 
 ### Simplicial Complexes
 
-- Construction of finite simplicial complexes
-- Automatic generation of all faces
-- Computation of dimension
-- Detection of maximal simplices
-- Extraction of the 1-skeleton
-- Join construction
-- Graph join construction
+* Construction of finite simplicial complexes
+* Automatic generation of all faces
+* Computation of dimension
+* Detection of maximal simplices
+* Extraction of the 1-skeleton
+* Join construction
+* Graph join construction
 
 ### Strong Collapse Theory
 
-- Dominated vertex detection
-- Strong collapse procedure
-- Core computation
-- Strong collapsibility testing
+* Dominated vertex detection
+* Strong collapse procedure
+* Core computation
+* Strong collapsibility testing
 
 ### Simplicial Geometric Category
 
-- Computation of `gscat`
-- Construction of categorical covers
-- Special graph algorithm based on arboricity
-- Graph covers by strongly collapsible subcomplexes
+* Computation of `gscat`
+* Construction of categorical covers
+* Special graph algorithm based on arboricity
+* Graph covers by strongly collapsible subcomplexes
 
 ### Visualization
 
-- Drawing simplicial complexes
-- Drawing categorical covers
-- Highlighting shared edges in different cover elements
-- Visualization of 1-dimensional and 2-dimensional complexes
+* Drawing simplicial complexes
+* Drawing categorical covers
+* Highlighting shared edges in different cover elements
+* Visualization of 1-dimensional and 2-dimensional complexes
 
 ### Experiments
 
-- Random graph generation
-- Random 2-dimensional complex generation
-- Search for counterexamples
-- Core statistics
-- Graph family tables
-- Computational checks of conjectures
+* Random graph generation
+* Random 2-dimensional complex generation
+* Search for counterexamples
+* Core statistics
+* Graph family tables
+* Computational checks of conjectures
+
+---
+
+## Performance
+
+PySimplicial combines a user-friendly mathematical interface with several internal optimizations for computational topology and graph algorithms.
+
+### Internal Representation
+
+The public API represents simplices as Python `frozenset` objects, providing a natural and readable mathematical description of simplicial complexes.
+
+For performance-critical computations, simplices are automatically encoded into compact bitmask representations. This allows fast operations such as:
+
+* simplex inclusion tests
+* maximal simplex detection
+* face comparisons
+* graph-theoretic computations
+
+The bitmask backend is completely transparent to the user.
+
+### NumPy Acceleration
+
+Several algorithms use NumPy-based implementations internally, including:
+
+* arboricity computation via the Nash–Williams formula
+* subset and bitmask transforms
+* induced subgraph statistics
+
+These optimizations significantly improve performance on medium-sized graphs while preserving the simplicity of the public API.
 
 ---
 
@@ -100,6 +129,12 @@ Install the required packages:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Main dependencies:
+
+```bash
+pip install numpy matplotlib networkx more-itertools pytest
 ```
 
 ---
@@ -177,12 +212,11 @@ For graphs, PySimplicial uses the relationship between `gscat` and graph arboric
 
 For a connected graph G:
 
-$$
+[
 gscat(G) = a(G) - 1
-$$
+]
 
-where a(G) is the arboricity of G.
-
+where (a(G)) is the arboricity of (G).
 
 ---
 
@@ -241,9 +275,11 @@ python experiments/check_gscat_vs_skeleton.py
 ```
 
 This script tests the experimental inequality
-$$
-gscat(K) \leq gscat(K^(1))
-$$
+
+[
+gscat(K) \leq gscat(K^{(1)})
+]
+
 on randomly generated 2-dimensional simplicial complexes.
 
 This is not a proof. It is a computational experiment.
@@ -284,14 +320,14 @@ pytest
 
 The tests check:
 
-- dimension computation
-- 1-skeleton construction
-- strong collapsibility
-- core computation
-- graph `gscat`
-- categorical cover correctness
-- strong collapsibility of cover elements
-- join construction
+* dimension computation
+* 1-skeleton construction
+* strong collapsibility
+* core computation
+* graph `gscat`
+* categorical cover correctness
+* strong collapsibility of cover elements
+* join construction
 
 ---
 
@@ -299,14 +335,15 @@ The tests check:
 
 This project was developed as an experimental tool for studying the simplicial geometric category and strong collapse theory.
 
-One of the motivating questions is the inequality
+One of the motivating research questions is the inequality
 
-$$
-gscat(K) \leq gscat(K^{(1)})
-$$
+[
+gscat(K) \leq gscat(K^{(1)}),
+]
 
+where (K^{(1)}) denotes the 1-skeleton of (K).
 
-where $$K^{(1)}$$ is the 1-skeleton of the simplicial complex K.
+At the moment this inequality is supported by computational experiments, but no general proof is currently included in the project.
 
 PySimplicial allows one to generate examples, compute categorical covers, test special cases, and search for possible counterexamples.
 
@@ -314,25 +351,33 @@ PySimplicial allows one to generate examples, compute categorical covers, test s
 
 ## Current Limitations
 
-- General `gscat` computation is exponential and intended only for small complexes.
-- The graph algorithm is faster, but constructing explicit covers can still be expensive for large dense graphs.
-- Some generated complexes are intended mainly for experiments and are not canonical minimal triangulations.
-- The project is currently under active development.
+* General `gscat` computation is exponential and intended only for small complexes.
+* The graph algorithm is faster, but constructing explicit covers can still be expensive for large dense graphs.
+* Join decomposition (`is_join`) currently uses exhaustive search and becomes expensive for complexes with many vertices.
+* Some generated complexes are intended mainly for experiments and are not canonical minimal triangulations.
+* The project is currently under active development.
 
 ---
 
-
 ## References
 
-- J. A. Barmak, *Algebraic Topology of Finite Topological Spaces and Applications*
-- D. Kozlov, *Combinatorial Algebraic Topology*
-- D. Fernández-Ternero, E. Macías-Virgós, J. A. Vilches, works on simplicial LS-category
-- C. St. J. A. Nash-Williams, work on graph arboricity
+* J. A. Barmak, *Algebraic Topology of Finite Topological Spaces and Applications*
+* D. Kozlov, *Combinatorial Algebraic Topology*
+* D. Fernández-Ternero, E. Macías-Virgós, J. A. Vilches, works on simplicial LS-category
+* C. St. J. A. Nash-Williams, work on graph arboricity
 
 ---
 
 ## Author
 
-Islam Yeginbay
+**Islam Yeginbay**
 
-Mathematical Computer Modeling, SDU University
+B.Sc. Student in Mathematical Computer Modeling
+Suleyman Demirel University (SDU)
+
+Research interests:
+
+* Simplicial topology
+* Strong collapse theory
+* Simplicial LS-category
+* Computational topology

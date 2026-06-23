@@ -2,6 +2,7 @@ from itertools import combinations
 import copy
 import math
 import random
+import numpy as np
 
 
 class SimplicialComplex:
@@ -343,58 +344,68 @@ def _connected_components(vertices, edges):
 
 def _arboricity_nash_williams(vertices, edges):
     """
-    Compute graph arboricity using the Nash-Williams formula.
+    Compute graph arboricity using the Nash-Williams formula:
 
-        a(G) = max ceil(|E(H)| / (|V(H)| - 1)), where |V(H)| >= 2.
+        a(G) = max ceil(|E(H)| / (|V(H)| - 1)), |V(H)| >= 2.
 
-    This implementation is faster than the direct subset implementation.
-    It represents vertex subsets by bitmasks and counts induced edges by
-    dynamic programming.
+    NumPy optimized version.
 
-    Complexity is roughly O(2^n + m * 2^(n-2)), so it is still exponential
-    in the number of vertices, but much faster in practice than recomputing
-    the number of edges separately for every subset.
+    Idea:
+    1. Encode every vertex subset by a bitmask.
+    2. Put 1 at mask {u,v} for every edge uv.
+    3. Use a vectorized subset zeta transform to compute, for every mask S,
+       the number of edges completely contained in S.
+
+    Still exponential in |V|, because Nash-Williams requires checking all
+    vertex subsets in the exact brute-force form, but the inner counting is
+    moved from Python loops to NumPy operations.
     """
     V = list(vertices)
     n = len(V)
 
-    if not edges:
+    if n < 2 or not edges:
         return 0
 
-    if n < 2:
-        return 0
+    # 2^n memory is unavoidable for this exact subset version.
+    # For n > 25 this can already become too large.
+    total_masks = 1 << n
 
     index = {v: i for i, v in enumerate(V)}
-    edge_masks = []
+
+    # edge_count[mask] initially stores only real edge masks.
+    # After the zeta transform, edge_count[S] = number of induced edges in S.
+    edge_count = np.zeros(total_masks, dtype=np.int32)
 
     for a, b in edges:
-        edge_masks.append((1 << index[a]) | (1 << index[b]))
+        emask = (1 << index[a]) | (1 << index[b])
+        edge_count[emask] += 1
 
-    total_masks = 1 << n
-    edge_count = [0] * total_masks
+    # Subset zeta transform:
+    # after processing bit i, every mask containing bit i also receives
+    # the value from the same mask without bit i.
+    for i in range(n):
+        step = 1 << i
+        blocks = edge_count.reshape(-1, step * 2)
+        blocks[:, step:] += blocks[:, :step]
 
-    # For every edge {u,v}, add 1 to every subset containing both u and v.
-    # This gives the number of induced edges for every vertex subset.
-    full_mask = total_masks - 1
+    # Size of every vertex subset. This part is cheap compared to edge counting.
+    # np.fromiter avoids storing Python list of length 2^n first.
+    sizes = np.fromiter(
+        (mask.bit_count() for mask in range(total_masks)),
+        dtype=np.int16,
+        count=total_masks,
+    )
 
-    for emask in edge_masks:
-        rest = full_mask ^ emask
-        sub = rest
+    valid = sizes >= 2
+    if not np.any(valid):
+        return 0
 
-        while True:
-            edge_count[sub | emask] += 1
-            if sub == 0:
-                break
-            sub = (sub - 1) & rest
+    ec = edge_count[valid].astype(np.int64)
+    denom = sizes[valid].astype(np.int64) - 1
 
-    best = 1
-
-    for mask in range(total_masks):
-        r = mask.bit_count()
-        if r >= 2 and edge_count[mask] > 0:
-            best = max(best, math.ceil(edge_count[mask] / (r - 1)))
-
-    return best
+    # ceil(ec / denom) using integer arithmetic.
+    values = (ec + denom - 1) // denom
+    return int(values.max(initial=0))
 
 def _cover_by_forests_fast(vertices, edges, k, max_restarts=300, seed=0):
     """
