@@ -83,3 +83,50 @@ def random_2_complex(n, p_edge=0.5, p_triangle=0.3, seed=None):
             K.add_simplex([i, j, k])
 
     return K
+
+def random_d_complex(
+    n,
+    dim=3,
+    p_edge=0.5,
+    p_simplex=0.3,
+    seed=None,
+):
+    """
+    Generate a random simplicial complex of dimension at most dim.
+
+    Construction:
+        1. Generate a random graph.
+        2. Add every k-simplex (k>=2) with probability p_simplex
+           provided that its entire boundary is already present.
+    """
+    rng = random.Random(seed)
+    K = SimplicialComplex()
+
+    for v in range(n):
+        K.add_simplex([v])
+
+    # ---------- edges ----------
+    edges = set()
+
+    for i, j in combinations(range(n), 2):
+        if rng.random() < p_edge:
+            edge = frozenset([i, j])
+            edges.add(edge)
+            K.add_simplex([i, j])
+
+    # ---------- higher-dimensional simplices ----------
+    for size in range(3, dim + 2):
+
+        for simplex in combinations(range(n), size):
+
+            boundary_exists = True
+
+            for face in combinations(simplex, size - 1):
+                if frozenset(face) not in K.simplicial_complex:
+                    boundary_exists = False
+                    break
+
+            if boundary_exists and rng.random() < p_simplex:
+                K.add_simplex(simplex)
+
+    return K
