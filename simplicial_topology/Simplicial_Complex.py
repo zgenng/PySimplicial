@@ -4,7 +4,6 @@ import math
 import random
 import numpy as np
 
-
 class SimplicialComplex:
     def __init__(self, simplicial_complex=None):
         self.simplicial_complex = set()
@@ -184,6 +183,149 @@ class SimplicialComplex:
         for v in self.vertices:
             for w in other.vertices:
                 result.add_simplex([v, w])
+
+        return result
+
+
+    def relabeled(self, mapping):
+        """
+        Return a relabeled copy of the simplicial complex.
+
+        Parameters
+        ----------
+        mapping : dict
+            Dictionary v -> new_v. Vertices not contained in mapping remain unchanged.
+        """
+        result = SimplicialComplex()
+
+        for simplex in self.simplicial_complex:
+            new_simplex = [
+                mapping.get(v, v)
+                for v in simplex
+            ]
+            result.add_simplex(new_simplex)
+
+        return result
+
+    def wedge(
+        self,
+        other,
+        self_vertex=None,
+        other_vertex=None,
+        relabel_other=True,
+        return_mapping=False,
+    ):
+        """
+        Return the wedge sum of two simplicial complexes.
+
+        The wedge K ∨ L is obtained by identifying one vertex of K
+        with one vertex of L.
+
+        Unlike join(), this operation does not add mixed simplices.
+        It only takes the union of the two complexes after gluing
+        one chosen vertex.
+
+        Parameters
+        ----------
+        other : SimplicialComplex
+            The second simplicial complex.
+
+        self_vertex : hashable or None
+            Vertex of self used for gluing. If None, a default vertex is chosen.
+
+        other_vertex : hashable or None
+            Vertex of other used for gluing. If None, a default vertex is chosen.
+
+        relabel_other : bool
+            If True, vertices of other are automatically relabeled to avoid
+            accidental collisions with vertices of self. Only other_vertex is
+            intentionally identified with self_vertex.
+
+            If False, an error is raised when other has vertex labels that
+            collide with self, except for the glued vertex.
+
+        return_mapping : bool
+            If True, return (result, mapping), where mapping tells how vertices
+            of other were relabeled.
+        """
+        self.update_vertices()
+        other.update_vertices()
+
+        if not self.vertices:
+            raise ValueError("Cannot take wedge: self has no vertices.")
+
+        if not other.vertices:
+            raise ValueError("Cannot take wedge: other has no vertices.")
+
+        if self_vertex is None:
+            self_vertex = _choose_default_vertex(self.vertices)
+
+        if other_vertex is None:
+            other_vertex = _choose_default_vertex(other.vertices)
+
+        if self_vertex not in self.vertices:
+            raise ValueError(
+                f"self_vertex={self_vertex} is not a vertex of self."
+            )
+
+        if other_vertex not in other.vertices:
+            raise ValueError(
+                f"other_vertex={other_vertex} is not a vertex of other."
+            )
+
+        result = SimplicialComplex()
+
+        for simplex in self.simplicial_complex:
+            result.add_simplex(list(simplex))
+
+        used = set(result.vertices)
+
+        mapping = {
+            other_vertex: self_vertex
+        }
+
+        other_remaining = set(other.vertices) - {other_vertex}
+
+        if not relabel_other:
+            overlap = used & other_remaining
+
+            if overlap:
+                raise ValueError(
+                    "Vertex labels collide between self and other. "
+                    f"Overlapping vertices: {overlap}. "
+                    "Use relabel_other=True to relabel other automatically."
+                )
+
+            for v in other_remaining:
+                mapping[v] = v
+
+        else:
+            preserved = {
+                v for v in other_remaining
+                if v not in used
+            }
+
+            reserved = set(used) | set(preserved)
+
+            for v in preserved:
+                mapping[v] = v
+
+            colliding = other_remaining - preserved
+
+            for v in colliding:
+                new_v = _fresh_vertex_label(reserved, v)
+                mapping[v] = new_v
+                reserved.add(new_v)
+
+        for simplex in other.simplicial_complex:
+            new_simplex = [
+                mapping[v]
+                for v in simplex
+            ]
+            result.add_simplex(new_simplex)
+
+        if return_mapping:
+            return result, mapping
 
         return result
 
@@ -739,3 +881,50 @@ def _gscat_general(k0):
                 return i - 1, combo
 
     return upper_n - 1, tuple(upper)
+
+def _choose_default_vertex(vertices):
+    """
+    Choose a default vertex.
+
+    We try to use min(vertices), because graph constructors usually use
+    integer labels. If labels are not comparable, we just take an arbitrary one.
+    """
+    if not vertices:
+        raise ValueError("Cannot choose a vertex from an empty vertex set.")
+
+    try:
+        return min(vertices)
+    except TypeError:
+        return next(iter(vertices))
+
+
+def _fresh_vertex_label(used, preferred):
+    """
+    Create a fresh vertex label that does not belong to used.
+
+    For integer-labelled complexes, this keeps labels integer.
+    For other labels, it creates labels like 'v_copy'.
+    """
+    if isinstance(preferred, int) and not isinstance(preferred, bool):
+        int_labels = [
+            v for v in used
+            if isinstance(v, int) and not isinstance(v, bool)
+        ]
+
+        candidate = max(int_labels, default=-1) + 1
+
+        while candidate in used:
+            candidate += 1
+
+        return candidate
+
+    base = f"{preferred}_copy"
+    candidate = base
+    index = 2
+
+    while candidate in used:
+        candidate = f"{base}_{index}"
+        index += 1
+
+    return candidate
+
