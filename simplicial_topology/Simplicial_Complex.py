@@ -186,6 +186,150 @@ class SimplicialComplex:
 
         return result
 
+    def is_graph_join(self):
+        """
+        Determine whether a graph is a nontrivial join G = G1 + G2.
+
+        If yes, return two largest/balanced induced graph factors.
+
+        The method is only for graphs, i.e. simplicial complexes of dimension <= 1.
+        If dimension > 1, it raises ValueError.
+
+        Returns
+        -------
+        (bool, G1, G2, partition)
+            If G is a join, returns:
+
+                True, G1, G2, (A, B)
+
+            where A and B are non-empty vertex sets and G = G[A] + G[B].
+
+            The partition (A, B) is chosen to maximize min(|A|, |B|),
+            so it avoids trivial decompositions like one vertex + everything else
+            when a larger decomposition is possible.
+
+            If G is not a join, returns:
+
+                False, None, None, None
+        """
+        if self.dimension() > 1:
+            raise ValueError(
+                "is_graph_join_largest requires a graph, i.e. dimension <= 1, "
+                f"but received dimension {self.dimension()}."
+            )
+
+        self.update_vertices()
+        vertices = list(self.vertices)
+
+        if len(vertices) < 2:
+            return False, None, None, None
+
+        edges = {frozenset(e) for e in _edges(self)}
+
+        # Build complement graph.
+        complement_adj = {v: set() for v in vertices}
+
+        for i in range(len(vertices)):
+            for j in range(i + 1, len(vertices)):
+                u = vertices[i]
+                v = vertices[j]
+
+                if frozenset([u, v]) not in edges:
+                    complement_adj[u].add(v)
+                    complement_adj[v].add(u)
+
+        # Connected components of complement graph.
+        complement_components = []
+        seen = set()
+
+        for start in vertices:
+            if start in seen:
+                continue
+
+            component = set()
+            stack = [start]
+            seen.add(start)
+
+            while stack:
+                v = stack.pop()
+                component.add(v)
+
+                for u in complement_adj[v]:
+                    if u not in seen:
+                        seen.add(u)
+                        stack.append(u)
+
+            complement_components.append(component)
+
+        # G is a join iff complement(G) is disconnected.
+        if len(complement_components) < 2:
+            return False, None, None, None
+
+        # Choose a balanced split of complement components.
+        # Any union of complement-components gives a valid join factor.
+        n = len(vertices)
+        target = n // 2
+
+        # DP subset sum over component sizes.
+        dp = {0: []}
+
+        for idx, comp in enumerate(complement_components):
+            size = len(comp)
+            new_dp = dict(dp)
+
+            for current_size, chosen_indices in dp.items():
+                new_size = current_size + size
+
+                if new_size <= target and new_size not in new_dp:
+                    new_dp[new_size] = chosen_indices + [idx]
+
+            dp = new_dp
+
+        best_size = max(dp.keys())
+        chosen = set(dp[best_size])
+
+        A = set()
+        B = set()
+
+        for idx, comp in enumerate(complement_components):
+            if idx in chosen:
+                A.update(comp)
+            else:
+                B.update(comp)
+
+        if not A or not B:
+            return False, None, None, None
+
+        G1 = self.induced_graph_subcomplex(A)
+        G2 = self.induced_graph_subcomplex(B)
+
+        return True, G1, G2, (A, B)
+
+    def induced_graph_subcomplex(self, vertex_subset):
+        """
+        Return the induced graph subcomplex on vertex_subset.
+
+        This keeps all vertices in vertex_subset and all edges of self whose
+        endpoints both belong to vertex_subset.
+        """
+        if self.dimension() > 1:
+            raise ValueError(
+                "induced_graph_subcomplex requires dimension <= 1, "
+                f"but received dimension {self.dimension()}."
+            )
+
+        vertex_subset = set(vertex_subset)
+
+        result = SimplicialComplex()
+
+        for v in vertex_subset:
+            result.add_simplex([v])
+
+        for a, b in _edges(self):
+            if a in vertex_subset and b in vertex_subset:
+                result.add_simplex([a, b])
+
+        return result
 
     def relabeled(self, mapping):
         """
@@ -329,7 +473,30 @@ class SimplicialComplex:
 
         return result
 
-    def gscat(self, for_graph=None):
+    def gscat(self, for_graph=None, method="nash_williams"):
+        """
+        Parameters
+        ----------
+        for_graph : bool or None
+            See original behaviour: forces / autodetects the graph-specific
+            branch for 1-dimensional complexes.
+
+        method : {"nash_williams", "matroid_partition"}
+            Only relevant when the graph branch (_gscat_graph) is used
+            (for_graph=True, or for_graph=None with dimension <= 1).
+
+            "nash_williams" (default): keeps the original approach —
+            arboricity computed via the Nash-Williams subset formula
+            (exponential in |V| per connected component, vectorized with
+            NumPy), followed by a randomized greedy / backtracking forest
+            cover.
+
+            "matroid_partition": exact arboricity AND forest decomposition
+            computed in one pass via Edmonds' matroid partitioning
+            algorithm (augmenting-path exchange search), polynomial in
+            the number of edges. Recommended for larger graphs where the
+            Nash-Williams subset enumeration becomes impractical.
+        """
         # For graphs, the cover must be constructed on the original graph, not on its core.
         # Otherwise a tree would have the correct value gscat=0, but an empty cover,
         # and a graph with pendant edges would lose those edges in the returned cover.
@@ -339,10 +506,10 @@ class SimplicialComplex:
                     "for_graph=True requires a 1-dimensional complex (graph), "
                     f"but dimension is {self.dimension()}"
                 )
-            return _gscat_graph(self)
+            return _gscat_graph(self, method=method)
 
         if for_graph is None and self.dimension() <= 1:
-            return _gscat_graph(self)
+            return _gscat_graph(self, method=method)
 
         # For general simplicial complexes we may work with the core since gscat
         # is preserved under strong collapse. However, the resulting cover belongs to the core.
@@ -700,15 +867,256 @@ def _cover_by_forests_backtrack(vertices, edges, k):
     return forests
 
 
+# ---------------------------------------------------------------------------
+# Edmonds' matroid partitioning algorithm (exact, polynomial in |E|),
+# specialized for the graphic matroid.
+#
+# This computes arboricity AND a valid forest decomposition in a single
+# incremental pass, as an alternative to the Nash-Williams subset formula
+# (which is exponential in |V|). For each edge, it tries to place it into
+# an existing forest directly; if that would create a cycle, it searches
+# for an augmenting sequence of exchanges (matroid union augmenting path):
+# some edge y on the cycle created by adding e may itself be relocated to
+# another forest (possibly triggering further exchanges), which frees up
+# room for e. Only if no such augmenting sequence exists is a new forest
+# opened. This is the standard textbook algorithm for matroid union /
+# partitioning (see e.g. Schrijver, "Combinatorial Optimization", chapter
+# on matroid union), specialized here to graphic matroids via union-find
+# based forest membership and BFS-based fundamental-cycle detection.
+# ---------------------------------------------------------------------------
+
+def _fundamental_cycle_edges(forest_edges_i, new_edge, vertices):
+    """
+    Return the list of edges of forest_edges_i lying on the unique path
+    between the endpoints of new_edge (i.e. the fundamental cycle that
+    would be created if new_edge were added to this forest).
+
+    Returns None if the endpoints of new_edge lie in different components
+    of forest_edges_i, meaning new_edge can be added directly with no
+    cycle.
+    """
+    a, b = new_edge
+    if a == b:
+        return []
+
+    adj = {}
+    for (u, v) in forest_edges_i:
+        adj.setdefault(u, []).append((v, (u, v)))
+        adj.setdefault(v, []).append((u, (u, v)))
+
+    if a not in adj and a != b:
+        if b not in adj:
+            return None if a != b else []
+    if a not in adj or b not in adj:
+        return None
+
+    visited = {a}
+    parent_edge = {}
+    stack = [a]
+
+    while stack:
+        u = stack.pop()
+        if u == b:
+            break
+        for (v, edge) in adj.get(u, []):
+            if v not in visited:
+                visited.add(v)
+                parent_edge[v] = (u, edge)
+                stack.append(v)
+
+    if b not in visited:
+        return None
+
+    path_edges = []
+    cur = b
+    while cur != a:
+        u, edge = parent_edge[cur]
+        path_edges.append(edge)
+        cur = u
+    return path_edges
+
+
+def _try_place_matroid(x, forest_edges, vertices, visited=None):
+    """
+    Try to place edge ``x`` into the existing list of forests by using the
+    augmenting-path exchange graph for the graphic matroid partition problem.
+
+    Important fix
+    -------------
+    The previous recursive implementation returned the first DFS exchange
+    chain it found.  Such a chain can be non-shortest and can use the same
+    forest several times in a way that makes the final simultaneous exchange
+    cyclic.  In other words, every *single* swap looked legal, but the whole
+    sequence could still leave a produced part that was not a forest.
+
+    This version uses the standard BFS shortest augmenting path:
+
+    * a node is an edge that currently has to be inserted;
+    * from edge ``e`` we draw an exchange arc to every edge ``y`` on the
+      fundamental cycle created by adding ``e`` to a forest ``F_i``;
+    * if ``e`` can be added to some ``F_i`` without a cycle, we have reached
+      the terminal of an augmenting path.
+
+    Returns
+    -------
+    list[tuple[int, tuple, tuple | None]] or None
+        A list of transitions ``(forest_index, edge_to_add, edge_to_remove)``
+        in the exact order in which they must be applied by
+        ``_apply_matroid_transitions``.  Returns ``None`` if no augmenting path
+        exists for the current number of forests, so the caller must open a new
+        forest.
+
+    Notes
+    -----
+    The ``visited`` parameter is kept only for backward compatibility with the
+    old call signature.  It is not used by the BFS implementation.
+    """
+    from collections import deque
+
+    if not forest_edges:
+        return None
+
+    predecessor = {x: None}  # edge -> (previous_edge, forest_index)
+    queue = deque([x])
+
+    terminal_edge = None
+    terminal_forest = None
+
+    while queue:
+        current = queue.popleft()
+
+        for i, fe in enumerate(forest_edges):
+            cycle = _fundamental_cycle_edges(fe, current, vertices)
+
+            if cycle is None:
+                terminal_edge = current
+                terminal_forest = i
+                queue.clear()
+                break
+
+            for y in cycle:
+                if y not in predecessor:
+                    predecessor[y] = (current, i)
+                    queue.append(y)
+
+        if terminal_edge is not None:
+            break
+
+    if terminal_edge is None:
+        return None
+
+    # Reconstruct the edge path:
+    #     x = path[0] -> path[1] -> ... -> path[-1] = terminal_edge
+    # labels[j] is the forest where path[j] replaces path[j + 1].
+    path = [terminal_edge]
+    labels = []
+    current = terminal_edge
+
+    while predecessor[current] is not None:
+        previous, forest_index = predecessor[current]
+        labels.append(forest_index)
+        path.append(previous)
+        current = previous
+
+    path.reverse()
+    labels.reverse()
+
+    # Apply from the terminal backwards:
+    # first insert the terminal edge into the forest that accepts it directly;
+    # then each previous edge replaces the next edge on the augmenting path.
+    transitions = [(terminal_forest, terminal_edge, None)]
+
+    for j in range(len(labels) - 1, -1, -1):
+        transitions.append((labels[j], path[j], path[j + 1]))
+
+    return transitions
+
+
+def _apply_matroid_transitions(forest_edges, transitions):
+    """Apply a sequence of (forest_index, edge_to_add, edge_to_remove) swaps."""
+    for (i, add_e, remove_e) in transitions:
+        if remove_e is not None:
+            try:
+                forest_edges[i].remove(remove_e)
+            except ValueError as exc:
+                raise RuntimeError(
+                    "Invalid matroid-partition transition: tried to remove "
+                    f"edge {remove_e} from forest {i}, but it is not there."
+                ) from exc
+
+        if add_e not in forest_edges[i]:
+            forest_edges[i].append(add_e)
+
+
+def _arboricity_and_forests_matroid_partition(vertices, edges):
+    """
+    Compute the exact arboricity of a graph together with a valid forest
+    decomposition, using Edmonds' matroid partitioning algorithm.
+
+    Unlike _arboricity_nash_williams (which is O(V * 2^V) because it must
+    enumerate vertex subsets to evaluate the Nash-Williams formula exactly),
+    this algorithm is polynomial in the number of edges: each edge is
+    either placed directly into an existing forest, or an augmenting
+    exchange sequence is found (or, failing that, a new forest is opened).
+    In the worst case this is roughly O(E^2 * V) (each of E edges may
+    trigger a DFS over up to E prior edges, each fundamental-cycle lookup
+    costing O(V + E)), which is still far better than the exponential
+    Nash-Williams subset enumeration for large V.
+
+    Returns (k, forests) where k = arboricity(G) - 1 is NOT applied here;
+    this function returns k = arboricity(G) itself (the raw number of
+    forests used), and forests is a list of k lists of edge tuples whose
+    union is exactly `edges`.
+    """
+    edge_list = list(edges)
+    forest_edges = []
+
+    for e in edge_list:
+        visited = set()
+        result = _try_place_matroid(e, forest_edges, vertices, visited)
+
+        if result is not None:
+            _apply_matroid_transitions(forest_edges, result)
+
+            # Catch implementation mistakes immediately.  The next augmenting
+            # step assumes every current part is a forest.
+            if any(not _is_forest(vertices, fe) for fe in forest_edges):
+                raise RuntimeError(
+                    "Internal error in matroid partitioning: an augmenting "
+                    "exchange produced a cyclic part."
+                )
+        else:
+            forest_edges.append([e])
+
+    # Sanity checks (cheap relative to the algorithm itself, but useful
+    # to catch any implementation bug rather than silently returning a
+    # wrong decomposition).
+    for fe in forest_edges:
+        if not _is_forest(vertices, fe):
+            raise RuntimeError(
+                "Internal error in matroid partitioning: a produced "
+                "component is not a forest."
+            )
+
+    union_edges = set().union(*(set(fe) for fe in forest_edges)) if forest_edges else set()
+    if union_edges != set(edge_list):
+        raise RuntimeError(
+            "Internal error in matroid partitioning: the decomposition "
+            "does not cover all edges."
+        )
+
+    return len(forest_edges), forest_edges
+
+
 def _extend_forest_to_tree(component_vertices, component_edges, forest_edges):
     """
     Extend a forest to a spanning tree inside the same connected component.
 
     For gscat, we need strongly collapsible subcomplexes, not merely forests.
     In a connected graph, such subcomplexes are trees. Therefore, each forest
-    obtained from the Nash-Williams decomposition is extended to a tree inside
-    the same connected component. The added edges may appear in several cover
-    elements; this is allowed.
+    obtained from the forest decomposition (Nash-Williams or matroid
+    partition) is extended to a tree inside the same connected component.
+    The added edges may appear in several cover elements; this is allowed.
     """
     component_vertices = list(component_vertices)
     tree_edges = set(forest_edges)
@@ -752,7 +1160,7 @@ def _extend_forest_to_tree(component_vertices, component_edges, forest_edges):
     return tree_edges
 
 
-def _gscat_graph(k0):
+def _gscat_graph(k0, method="nash_williams"):
     """
     Compute gscat for a 1-dimensional simplicial complex using arboricity.
 
@@ -763,15 +1171,34 @@ def _gscat_graph(k0):
     However, the cover itself must consist of strongly collapsible
     subcomplexes. Therefore, the algorithm:
 
-      1. computes arboricity using the Nash-Williams formula;
-      2. decomposes the edge set into the minimum number of forests;
-      3. extends each forest to a tree inside the corresponding component;
-      4. returns these trees as cover elements.
+      1. computes arboricity and a forest decomposition of the edge set,
+         using either the Nash-Williams subset formula (method="nash_williams",
+         exponential in |V| per component, but exact via brute force) or
+         Edmonds' matroid partitioning algorithm (method="matroid_partition",
+         polynomial in |E|, also exact);
+      2. extends each forest to a tree inside the corresponding component
+         (only needed when the forests come from the Nash-Williams route,
+         since the matroid-partition route can, in principle, also be
+         extended the same way for consistency);
+      3. returns these trees as cover elements.
 
     For disconnected graphs, the components are treated independently and
     their covers are combined. Hence the number of cover elements is the sum
     of the numbers of trees/singletons used for the components.
+
+    Parameters
+    ----------
+    method : {"nash_williams", "matroid_partition"}
+        Selects the algorithm used to compute arboricity + forest cover.
+        Both are exact; matroid_partition is recommended for larger graphs
+        since it avoids the 2^V subset enumeration of Nash-Williams.
     """
+    if method not in ("nash_williams", "matroid_partition"):
+        raise ValueError(
+            f"Unknown method={method!r} for _gscat_graph; "
+            "expected 'nash_williams' or 'matroid_partition'."
+        )
+
     vertices = sorted(k0.vertices)
     edges = _edges(k0)
 
@@ -795,20 +1222,25 @@ def _gscat_graph(k0):
             cover.append(sc.simplicial_complex)
             continue
 
-        a = _arboricity_nash_williams(comp_vertices, comp_edges)
-        forests = _cover_by_forests_fast(comp_vertices, comp_edges, a)
+        if method == "matroid_partition":
+            a, forests = _arboricity_and_forests_matroid_partition(comp_vertices, comp_edges)
+        else:
+            a = _arboricity_nash_williams(comp_vertices, comp_edges)
+            forests = _cover_by_forests_fast(comp_vertices, comp_edges, a)
 
-        # For small graphs we keep an exact fallback. For larger graphs,
-        # exponential backtracking can be too slow, so the fast method is preferred.
-        if forests is None and len(comp_edges) <= 18:
-            forests = _cover_by_forests_backtrack(comp_vertices, comp_edges, a)
+            # For small graphs we keep an exact fallback. For larger graphs,
+            # exponential backtracking can be too slow, so the fast method is preferred.
+            if forests is None and len(comp_edges) <= 18:
+                forests = _cover_by_forests_backtrack(comp_vertices, comp_edges, a)
 
-        if forests is None:
-            raise RuntimeError(
-                "Could not construct a forest cover with the fast method. "
-                "Try increasing max_restarts in _cover_by_forests_fast, "
-                "or use the exact backtracking method for a smaller graph."
-            )
+            if forests is None:
+                raise RuntimeError(
+                    "Could not construct a forest cover with the fast method. "
+                    "Try increasing max_restarts in _cover_by_forests_fast, "
+                    "use the exact backtracking method for a smaller graph, "
+                    "or pass method='matroid_partition' to gscat() for an "
+                    "exact polynomial-time alternative."
+                )
 
         for forest in forests:
             tree_edges = _extend_forest_to_tree(comp_vertices, comp_edges, forest)
@@ -927,4 +1359,3 @@ def _fresh_vertex_label(used, preferred):
         index += 1
 
     return candidate
-
