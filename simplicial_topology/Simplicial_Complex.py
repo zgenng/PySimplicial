@@ -473,13 +473,25 @@ class SimplicialComplex:
 
         return result
 
-    def gscat(self, for_graph=None, method="nash_williams"):
+    def gscat(
+        self,
+        for_graph=None,
+        method="nash_williams",
+        *,
+        for_graphs=None,
+        edge_disjoint=True,
+    ):
         """
         Parameters
         ----------
         for_graph : bool or None
             See original behaviour: forces / autodetects the graph-specific
             branch for 1-dimensional complexes.
+
+        for_graphs : bool or None
+            Backward-compatible alias for ``for_graph``.  Thus both
+            ``gscat(for_graph=True)`` and ``gscat(for_graphs=True)`` are
+            accepted.  Supplying contradictory values raises ``ValueError``.
 
         method : {"nash_williams", "matroid_partition"}
             Only relevant when the graph branch (_gscat_graph) is used
@@ -496,7 +508,26 @@ class SimplicialComplex:
             algorithm (augmenting-path exchange search), polynomial in
             the number of edges. Recommended for larger graphs where the
             Nash-Williams subset enumeration becomes impractical.
+
+        edge_disjoint : bool
+            Only relevant for graphs.  If True (default), every edge of the
+            graph belongs to exactly one returned cover element.  Different
+            elements may still meet at vertices, as is unavoidable in a
+            connected graph.
+
+            A minimum gscat-cover cannot always be chosen edge-disjoint.  In
+            that case the first returned value is still the exact gscat, while
+            the returned edge-disjoint cover contains more than gscat + 1
+            strongly collapsible subcomplexes.  Pass ``edge_disjoint=False``
+            to obtain a minimum cover; that cover may repeat connecting edges.
         """
+        if for_graphs is not None:
+            if for_graph is not None and for_graph != for_graphs:
+                raise ValueError(
+                    "for_graph and for_graphs were given contradictory values"
+                )
+            for_graph = for_graphs
+
         # For graphs, the cover must be constructed on the original graph, not on its core.
         # Otherwise a tree would have the correct value gscat=0, but an empty cover,
         # and a graph with pendant edges would lose those edges in the returned cover.
@@ -506,23 +537,29 @@ class SimplicialComplex:
                     "for_graph=True requires a 1-dimensional complex (graph), "
                     f"but dimension is {self.dimension()}"
                 )
-            return _gscat_graph(self, method=method)
+            return _gscat_graph(
+                self,
+                method=method,
+                edge_disjoint=edge_disjoint,
+            )
 
         if for_graph is None and self.dimension() <= 1:
-            return _gscat_graph(self, method=method)
+            return _gscat_graph(
+                self,
+                method=method,
+                edge_disjoint=edge_disjoint,
+            )
 
         # For general simplicial complexes we may work with the core since gscat
         # is preserved under strong collapse. However, the resulting cover belongs to the core.
         # If one needs a cover of the original 2-dimensional complex, a separate lifting procedure is required.
-        k0 = self.core()
-
-        if len(k0.vertices) <= 1:
+        if len(copy.deepcopy(self).vertices) <= 1:
             return 0, [self.simplicial_complex]
 
         if for_graph is False:
-            return _gscat_general_naive(k0)
+            return _gscat_general_naive(copy.deepcopy(self))
 
-        return _gscat_general(k0)
+        return _gscat_general(copy.deepcopy(self))
 
 
 def _gscat_general_naive(k0):
@@ -768,6 +805,9 @@ def _cover_by_forests_fast(vertices, edges, k, max_restarts=300, seed=0):
         reverse=True,
     )
 
+    best_forests = None
+    best_component_count = math.inf
+
     for attempt in range(max_restarts):
         if attempt == 0:
             order = base_order[:]
@@ -777,6 +817,7 @@ def _cover_by_forests_fast(vertices, edges, k, max_restarts=300, seed=0):
 
         parents = [list(range(len(vertices))) for _ in range(k)]
         forests = [[] for _ in range(k)]
+        active_vertices = [set() for _ in range(k)]
 
         success = True
 
@@ -790,11 +831,23 @@ def _cover_by_forests_fast(vertices, edges, k, max_restarts=300, seed=0):
                 success = False
                 break
 
-            # Prefer the currently smallest forest. This balances the cover.
-            f = min(possible, key=lambda x: len(forests[x]))
+            # Prefer a forest already containing the endpoints.  Besides
+            # keeping the decomposition valid, this tends to make every part
+            # connected and therefore reduces the number of trees needed by
+            # an edge-disjoint gscat cover.
+            f = min(
+                possible,
+                key=lambda x: (
+                    -int(a in active_vertices[x])
+                    -int(b in active_vertices[x]),
+                    -len(forests[x]),
+                    x,
+                ),
+            )
 
             add_edge(parents[f], a, b)
             forests[f].append((a, b))
+            active_vertices[f].update((a, b))
 
         if success:
             if any(not _is_forest(vertices, f) for f in forests):
@@ -802,9 +855,21 @@ def _cover_by_forests_fast(vertices, edges, k, max_restarts=300, seed=0):
 
             union_edges = set().union(*(set(f) for f in forests)) if forests else set()
             if union_edges == set(edge_list):
-                return forests
+                component_count = sum(
+                    len(_split_forest_into_trees(forest))
+                    for forest in forests
+                )
 
-    return None
+                if component_count < best_component_count:
+                    best_forests = [forest[:] for forest in forests]
+                    best_component_count = component_count
+
+                # Every one of the k forests is already a tree, so this is an
+                # edge-disjoint minimum gscat-cover and cannot be improved.
+                if component_count == k and all(forests):
+                    return best_forests
+
+    return best_forests
 
 
 def _cover_by_forests_backtrack(vertices, edges, k):
@@ -1108,6 +1173,118 @@ def _arboricity_and_forests_matroid_partition(vertices, edges):
     return len(forest_edges), forest_edges
 
 
+def _split_forest_into_trees(forest_edges):
+    """
+    Split a forest into its non-empty connected components.
+
+    Every returned edge set is a tree.  No edge is added or copied, so a
+    partition of the graph edges into forests becomes a partition into trees.
+    """
+    forest_edges = set(forest_edges)
+    if not forest_edges:
+        return []
+
+    vertices = {v for edge in forest_edges for v in edge}
+    if not _is_forest(vertices, forest_edges):
+        raise RuntimeError("Cannot split a cyclic edge set into forest components")
+
+    adjacency = {v: set() for v in vertices}
+    for a, b in forest_edges:
+        adjacency[a].add(b)
+        adjacency[b].add(a)
+
+    unseen = set(vertices)
+    trees = []
+
+    while unseen:
+        start = min(unseen, key=repr)
+        component_vertices = {start}
+        stack = [start]
+        unseen.remove(start)
+
+        while stack:
+            v = stack.pop()
+            for u in adjacency[v]:
+                if u in unseen:
+                    unseen.remove(u)
+                    component_vertices.add(u)
+                    stack.append(u)
+
+        component_edges = {
+            (a, b)
+            for a, b in forest_edges
+            if a in component_vertices and b in component_vertices
+        }
+
+        if component_edges:
+            trees.append(component_edges)
+
+    return trees
+
+
+def _merge_edge_disjoint_trees(trees):
+    """
+    Greedily merge edge-disjoint trees whenever their union is still a tree.
+
+    Two non-empty edge-disjoint trees have a tree as their union exactly when
+    their vertex sets meet in one vertex.  Merging such pairs keeps all edges
+    pairwise disjoint and usually makes the returned cover substantially
+    smaller than simply returning every component of every forest.
+    """
+    parts = []
+    seen_edges = set()
+
+    for tree in trees:
+        tree_edges = set(tree)
+        if not tree_edges:
+            continue
+
+        overlap = seen_edges & tree_edges
+        if overlap:
+            raise RuntimeError(
+                "The forest decomposition repeats an edge: "
+                f"{next(iter(overlap))}"
+            )
+
+        tree_vertices = {v for edge in tree_edges for v in edge}
+        if not _is_forest(tree_vertices, tree_edges) or not _is_connected(
+            tree_vertices,
+            tree_edges,
+        ):
+            raise RuntimeError("An edge-disjoint cover part is not a tree")
+
+        parts.append((tree_edges, tree_vertices))
+        seen_edges.update(tree_edges)
+
+    while True:
+        best = None
+
+        for i in range(len(parts)):
+            for j in range(i + 1, len(parts)):
+                edges_i, vertices_i = parts[i]
+                edges_j, vertices_j = parts[j]
+
+                if len(vertices_i & vertices_j) != 1:
+                    continue
+
+                score = len(edges_i) + len(edges_j)
+                if best is None or score > best[0]:
+                    best = (score, i, j)
+
+        if best is None:
+            break
+
+        _, i, j = best
+        edges_i, vertices_i = parts[i]
+        edges_j, vertices_j = parts[j]
+        merged = (edges_i | edges_j, vertices_i | vertices_j)
+
+        parts[i] = merged
+        parts.pop(j)
+
+    return [edges for edges, _ in parts]
+
+
 def _extend_forest_to_tree(component_vertices, component_edges, forest_edges):
     """
     Extend a forest to a spanning tree inside the same connected component.
@@ -1160,7 +1337,7 @@ def _extend_forest_to_tree(component_vertices, component_edges, forest_edges):
     return tree_edges
 
 
-def _gscat_graph(k0, method="nash_williams"):
+def _gscat_graph(k0, method="nash_williams", edge_disjoint=True):
     """
     Compute gscat for a 1-dimensional simplicial complex using arboricity.
 
@@ -1176,11 +1353,12 @@ def _gscat_graph(k0, method="nash_williams"):
          exponential in |V| per component, but exact via brute force) or
          Edmonds' matroid partitioning algorithm (method="matroid_partition",
          polynomial in |E|, also exact);
-      2. extends each forest to a tree inside the corresponding component
-         (only needed when the forests come from the Nash-Williams route,
-         since the matroid-partition route can, in principle, also be
-         extended the same way for consistency);
-      3. returns these trees as cover elements.
+      2. if ``edge_disjoint=True``, splits the forests into trees and merges
+         compatible trees without ever copying an edge;
+      3. otherwise, extends every forest to a spanning tree, which gives a
+         minimum gscat-cover but may place a connecting edge in several cover
+         elements;
+      4. returns the resulting trees as cover elements.
 
     For disconnected graphs, the components are treated independently and
     their covers are combined. Hence the number of cover elements is the sum
@@ -1192,6 +1370,11 @@ def _gscat_graph(k0, method="nash_williams"):
         Selects the algorithm used to compute arboricity + forest cover.
         Both are exact; matroid_partition is recommended for larger graphs
         since it avoids the 2^V subset enumeration of Nash-Williams.
+
+    edge_disjoint : bool
+        If True, the returned trees have pairwise disjoint edge sets.  Their
+        intersections may contain vertices.  Such a cover is not necessarily
+        minimum, so its length may exceed the returned gscat value plus one.
     """
     if method not in ("nash_williams", "matroid_partition"):
         raise ValueError(
@@ -1207,6 +1390,7 @@ def _gscat_graph(k0, method="nash_williams"):
 
     components = _connected_components(vertices, edges)
     cover = []
+    minimum_cover_elements = 0
 
     for comp_vertices in components:
         comp_vertices = sorted(comp_vertices)
@@ -1220,6 +1404,7 @@ def _gscat_graph(k0, method="nash_williams"):
             sc = SimplicialComplex()
             sc.add_simplex([comp_vertices[0]])
             cover.append(sc.simplicial_complex)
+            minimum_cover_elements += 1
             continue
 
         if method == "matroid_partition":
@@ -1242,9 +1427,25 @@ def _gscat_graph(k0, method="nash_williams"):
                     "exact polynomial-time alternative."
                 )
 
-        for forest in forests:
-            tree_edges = _extend_forest_to_tree(comp_vertices, comp_edges, forest)
-            sc = _make_subcomplex_from_edges(tree_edges, vertices=comp_vertices)
+        minimum_cover_elements += a
+
+        if edge_disjoint:
+            trees = []
+            for forest in forests:
+                trees.extend(_split_forest_into_trees(forest))
+            trees = _merge_edge_disjoint_trees(trees)
+        else:
+            trees = [
+                _extend_forest_to_tree(comp_vertices, comp_edges, forest)
+                for forest in forests
+            ]
+
+        for tree_edges in trees:
+            tree_vertices = None if edge_disjoint else comp_vertices
+            sc = _make_subcomplex_from_edges(
+                tree_edges,
+                vertices=tree_vertices,
+            )
 
             # Final mathematical check: each cover element must be strongly collapsible.
             if not sc.is_strongly_collapsible():
@@ -1257,7 +1458,28 @@ def _gscat_graph(k0, method="nash_williams"):
     if union_cover != target:
         raise RuntimeError("The constructed cover does not coincide with the original complex")
 
-    return len(cover) - 1, tuple(cover)
+    if edge_disjoint:
+        used_edges = set()
+        for cover_element in cover:
+            element_edges = {
+                tuple(sorted(simplex))
+                for simplex in cover_element
+                if len(simplex) == 2
+            }
+            repeated = used_edges & element_edges
+            if repeated:
+                raise RuntimeError(
+                    "The constructed cover is not edge-disjoint; repeated edge "
+                    f"{next(iter(repeated))}"
+                )
+            used_edges.update(element_edges)
+
+        if used_edges != edges:
+            raise RuntimeError(
+                "The edge-disjoint cover does not partition all graph edges"
+            )
+
+    return minimum_cover_elements - 1, tuple(cover)
 
 def _is_categorical_candidate(simplices_subset, ambient):
     sc = SimplicialComplex()
