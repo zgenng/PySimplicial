@@ -373,7 +373,7 @@ PySimplicial allows one to generate examples, compute categorical covers, test s
 Islam Yeginbay
 
 B.Sc. Student in Mathematical Computer Modeling
-Suleyman Demirel University (SDU)
+SDU University 
 
 Email: [islam.yeginbay@gmail.com](mailto:islam.yeginbay@gmail.com)
 
