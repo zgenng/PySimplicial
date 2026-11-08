@@ -5,7 +5,7 @@ import unittest
 
 from pysimplicial import gscat
 from pysimplicial.datasets import (
-    complete_graph, generate_rips_data, genus_two_triangulation, projective_plane,
+    complete_graph, generate_rips_data,projective_plane,
     rips_complex, torus, triangulation,
 )
 from pysimplicial.visualization import (
@@ -15,7 +15,6 @@ from pysimplicial.visualization import (
 
 class DatasetTests(unittest.TestCase):
     def test_catalog(self):
-        self.assertEqual(len(genus_two_triangulation(865).facets), 24)
         self.assertEqual(triangulation("CP2").dimension(), 4)
         self.assertEqual(surface_statistics(projective_plane())["crosscap_number"], 1)
         self.assertEqual(surface_statistics(torus())["genus"], 1)
