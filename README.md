@@ -124,6 +124,13 @@ print(result.cover)
 print(result.chains)
 ```
 
+`scat(K, backend="cuda")` uses CUDA for batches of contiguity moves.
+The CPU assembles the exact cover and checks its chains. Set `backend="auto"`
+to use the CPU when CUDA is unavailable, a connected component has more than
+64 vertices, or a batch is small. The default is `backend="cpu"`. Use
+`device_id` to select a CUDA device and `batch_size` to cap the number of maps
+per batch. An exhausted search limit raises `SearchLimitExceeded`.
+
 ### Geometric category
 
 ```python

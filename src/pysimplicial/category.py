@@ -9,7 +9,7 @@ from ._errors import CudaUnavailableError, SearchLimitExceeded
 from ._solvers.set_cover import _iter_bits, minimum_set_cover
 from .collapse import is_strongly_collapsible
 from .complex import SimplicialComplex
-from .contiguity import contiguity_chain, same_contiguity_class
+from .contiguity import _find_chain, _MoveTable, contiguity_chain, is_contiguous, same_contiguity_class
 from .maps import SimplicialMap
 from .operations import connected_components
 
@@ -60,14 +60,41 @@ def is_categorical(
     return same_contiguity_class(inclusion, constant, max_states=max_states)
 
 
+def _inclusion_move_test(facets):
+    incident = {}
+    neighbors = {}
+    for i, facet in enumerate(facets):
+        for vertex in facet:
+            incident[vertex] = incident.get(vertex, 0) | (1 << i)
+            neighbors.setdefault(vertex, set()).update(facet)
+    blockers = []
+    for vertex, row in incident.items():
+        bad_rows = {row & ~incident[w] for w in neighbors[vertex] - {vertex}}
+        blockers.append((row, bad_rows))
+
+    def has_move(mask):
+        # With ambient facets as the domain facets, a new image w must
+        # already lie in every selected facet incident to the moved vertex.
+        for row, bad_rows in blockers:
+            selected = mask & row
+            if selected and any(not (selected & bad) for bad in bad_rows):
+                return True
+        return False
+
+    return has_move
+
+
 def _local_cover(
     domain: SimplicialComplex,
     find_chain: Callable[[SimplicialComplex], Chain | None],
     max_subcomplexes: int | None,
     max_search_states: int | None,
+    *,
+    inclusion: bool = False,
 ) -> CategoryResult:
     """Only closures of selected ambient facets are needed for a hereditary test."""
     facets = tuple(domain.facets)
+    has_move = _inclusion_move_test(facets) if inclusion and len(facets) > 1 else None
     full = (1 << len(facets)) - 1
     frontier = deque([full])
     seen = {full}
@@ -88,8 +115,11 @@ def _local_cover(
         tested += 1
         if max_subcomplexes is not None and tested > max_subcomplexes:
             raise SearchLimitExceeded("Cover candidate generation exceeded max_subcomplexes.")
-        part = domain if mask == full else SimplicialComplex(facets[i] for i in _iter_bits(mask))
-        chain = find_chain(part)
+        chain = None
+        # Singleton facets can be categorical even if no move is necessary.
+        if has_move is None or mask.bit_count() == 1 or has_move(mask):
+            part = domain if mask == full else SimplicialComplex(facets[i] for i in _iter_bits(mask))
+            chain = find_chain(part)
         if chain is not None:
             witnesses[mask] = part, chain
             if mask == full:
@@ -154,25 +184,64 @@ def contiguity_distance(
 def scat(
     complex_: SimplicialComplex,
     *,
+    backend: str = "cpu",
+    device_id: int = 0,
+    batch_size: int = 1024,
     max_states: int | None = None,
     max_subcomplexes: int | None = None,
     max_search_states: int | None = None,
 ) -> CategoryResult:
-    """Minimum categorical cover, with a separate constant in each component."""
+    """Find an exact categorical cover, optionally batching map moves on CUDA.
+
+    Explicit CUDA requires a device and supports up to 64 vertices per
+    connected component. Auto uses CPU for small batches or unavailable CUDA.
+    """
+    if backend not in {"cpu", "cuda", "auto"}:
+        raise ValueError("backend must be 'cpu', 'cuda', or 'auto'.")
+    if type(device_id) is not int or device_id < 0:
+        raise ValueError("device_id must be a nonnegative integer.")
+    if type(batch_size) is not int or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer.")
     _validate_limit("max_states", max_states)
     _validate_limit("max_subcomplexes", max_subcomplexes)
     _validate_limit("max_search_states", max_search_states)
+    components = tuple(connected_components(complex_))
+    use_cuda = False
+    if components and backend != "cpu":
+        from ._solvers.cuda_contiguity import MAX_VERTICES, _CudaMoves
+        from ._solvers.cuda_restarts import _require_cuda
+
+        if backend == "cuda" and any(len(part.vertices) > MAX_VERTICES for part in components):
+            raise ValueError(f"scat CUDA supports up to {MAX_VERTICES} vertices per connected component.")
+        try:
+            _require_cuda(device_id)
+        except CudaUnavailableError:
+            if backend == "cuda":
+                raise
+        else:
+            use_cuda = True
+
     cover = []
     chains = []
-    for component in connected_components(complex_):
+    for component in components:
         vertex = next(iter(component.vertices))
-        result = contiguity_distance(
-            SimplicialMap.inclusion(component, complex_),
-            SimplicialMap.constant(component, complex_, vertex),
-            max_states=max_states,
-            max_subcomplexes=max_subcomplexes,
-            max_search_states=max_search_states,
+        moves = _MoveTable(component)
+        cuda_moves = (
+            _CudaMoves(moves, batch_size=batch_size, auto=backend == "auto")
+            if use_cuda and len(component.vertices) <= MAX_VERTICES else None
         )
+
+        def find_chain(part):
+            return _find_chain(
+                SimplicialMap.inclusion(part, complex_), SimplicialMap.constant(part, complex_, vertex),
+                max_states, moves=moves, cuda_moves=cuda_moves,
+            )
+
+        result = _local_cover(component, find_chain, max_subcomplexes, max_search_states, inclusion=True)
+        if cuda_moves and not all(
+            is_contiguous(a, b) for chain in result.chains for a, b in zip(chain, chain[1:])
+        ):
+            raise RuntimeError("The CPU verifier rejected a CUDA contiguity chain.")
         cover.extend(result.cover)
         chains.extend(result.chains)
     return CategoryResult(max(0, len(cover) - 1), tuple(cover), tuple(chains))
